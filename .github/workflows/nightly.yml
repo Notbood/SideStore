@@ -130,6 +130,10 @@ jobs:
           mkdir -p build/logs
           python3 scripts/ci/workflow.py boot-sim-async "iPhone 17 Pro"
 
+      - name: Apply login fix patch
+        if: steps.build_gate.outputs.should_skip != 'true'
+        run: cp patches/Authentication.swift Dependencies/SideSign/Sources/DeveloperPortal/Authentication.swift
+          
       - name: Build
         if: steps.build_gate.outputs.should_skip != 'true'
         id: build
