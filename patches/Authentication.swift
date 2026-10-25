@@ -15,19 +15,19 @@ private enum PushedCodeState {
 
 public extension DeveloperPortal {
 
-    // Fork changes (login fix), all marked "Fork:" below:
-    //  * GrandSlam sign-in (SRP) always sends a Windows client identity and an akd user agent.
-    //  * Apple's gsa.apple.com/auth 2FA pages refuse that Windows identity (HTTP 403, error -80046),
-    //    so the 2FA requests are sent with a Mac identity instead. If Apple still answers 403/433/500/503,
-    //    the request is sent once more with the sign-in identity (the original behaviour).
-    private static let windowsClientInfo = "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+    // Fork changes (login fix, version 2), all marked "Fork:" below:
+    //  * Apple now rejects GrandSlam, 2FA and developer services requests that identify as Windows/iTunes
+    //    (error -80046 after the verification code), so every request uses the client info that came with
+    //    the anisette data, which is the identity of the (Mac) anisette server that provisioned it.
+    //  * The user agent for GrandSlam and the 2FA pages is akd, never a Mac/Xcode one.
+    //  * If Apple answers a 2FA request with 403/433/500/503, it is sent once more with a fixed Mac identity.
     private static let akdUserAgent = "akd/1.0 CFNetwork/808.1.4"
     private static let macClientInfoFor2FA = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 
-    /// Fork: the configured client info if it already says Windows, otherwise the stock Windows string.
+    /// Fork: the client info that came with the anisette data, or a Mac identity if there is none.
     private func signInClientInfo(_ configured: String) -> String {
         let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.contains("Windows") ? trimmed : Self.windowsClientInfo
+        return trimmed.isEmpty ? Self.macClientInfoFor2FA : trimmed
     }
 
     func authenticate(appleID unsanitizedAppleID: String,
@@ -332,7 +332,7 @@ public extension DeveloperPortal {
         request.httpMethod = "POST"
         request.httpBody = plistData
 
-        // Fork: Windows client identity and akd user agent for GrandSlam (Apple rejects Mac/Xcode identities here).
+        // Fork: the anisette server's client info and an akd user agent for GrandSlam (Apple rejects Mac/Xcode user agents here).
         var grandSlamUserAgent = h.grandSlam.userAgent.trimmingCharacters(in: .whitespacesAndNewlines)
         if grandSlamUserAgent.isEmpty
             || grandSlamUserAgent.contains("Macintosh")
@@ -692,7 +692,7 @@ public extension DeveloperPortal {
         debugLog("[SideSign] Requesting trusted device 2FA code...")
         verboseLog("[SideSign] sendTrustedDevice2FACodeRequest for dsid: \(context.dsid)")
 
-        // Fork: sent with the Mac identity, see performTwoFactorRequest.
+        // Fork: identity handling, see performTwoFactorRequest.
         let (data, httpResponse) = try await performTwoFactorRequest(
             url: Constants.URLs.trustedDevice,
             method: "GET",
@@ -733,7 +733,7 @@ public extension DeveloperPortal {
             "serverInfo": serverInfo
         ], format: .xml, options: 0)
 
-        // Fork: sent with the Mac identity, see performTwoFactorRequest.
+        // Fork: identity handling, see performTwoFactorRequest.
         let (data, httpResponse) = try await performTwoFactorRequest(
             url: Constants.URLs.phonePutURL(mode: requestedMode),
             method: "POST",
@@ -820,7 +820,7 @@ public extension DeveloperPortal {
 
     private func validateTrustedDevice2FACode(code: String, context: TwoFactorAuthContext) async throws -> TwoFactorAuthValidationResult {
         debugLog("[SideSign] Verifying trusted device security code...")
-        // Fork: sent with the Mac identity, see performTwoFactorRequest.
+        // Fork: identity handling, see performTwoFactorRequest.
         let (verifyData, verifyHttpResponse) = try await performTwoFactorRequest(
             url: Constants.URLs.grandSlamValidate,
             method: "GET",
@@ -844,7 +844,7 @@ public extension DeveloperPortal {
         ], format: .xml, options: 0)
 
         debugLog("[SideSign] Verifying secondary security code...")
-        // Fork: sent with the Mac identity, see performTwoFactorRequest.
+        // Fork: identity handling, see performTwoFactorRequest.
         let (verifyData, verifyHttpResponse) = try await performTwoFactorRequest(
             url: Constants.URLs.phoneSecurityCode,
             method: "POST",
@@ -914,9 +914,9 @@ public extension DeveloperPortal {
         return .success
     }
 
-    /// Fork: `useMacIdentity` true sends the Mac client info and akd user agent that Apple's 2FA pages accept;
-    /// false sends the original request (the sign-in identity and the developer services user agent).
-    private func makeTwoFactorAuthRequest(url: URL, context: TwoFactorAuthContext, useMacIdentity: Bool = true) -> URLRequest {
+    /// Fork: `useMacIdentity` false sends the sign-in identity (the anisette server's client info);
+    /// true sends the fixed Mac client info. Both use the akd user agent.
+    private func makeTwoFactorAuthRequest(url: URL, context: TwoFactorAuthContext, useMacIdentity: Bool = false) -> URLRequest {
         let identityToken = "\(context.dsid):\(context.idmsToken)"
         let encodedIdentityToken = Data(identityToken.utf8).base64EncodedString()
 
@@ -924,7 +924,7 @@ public extension DeveloperPortal {
         let a = context.anisetteData
         let h = customHeaders
         let clientInfo = useMacIdentity ? Self.macClientInfoFor2FA : signInClientInfo(a.clientInfo)
-        let userAgent = useMacIdentity ? Self.akdUserAgent : h.developerServices.userAgent
+        let userAgent = Self.akdUserAgent
         let headers: [String: String] = [
             "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
@@ -949,8 +949,8 @@ public extension DeveloperPortal {
         return request
     }
 
-    /// Fork: sends one gsa.apple.com/auth 2FA request with the Mac identity. If Apple answers 403, 433, 500 or 503,
-    /// the request is sent once more with the original sign-in identity.
+    /// Fork: sends one gsa.apple.com/auth 2FA request with the sign-in identity. If Apple answers 403, 433, 500 or 503,
+    /// the request is sent once more with the fixed Mac identity.
     private func performTwoFactorRequest(url: URL,
                                          method: String,
                                          body: Data? = nil,
@@ -958,7 +958,7 @@ public extension DeveloperPortal {
                                          context: TwoFactorAuthContext,
                                          actionName: String) async throws -> (data: Data, response: HTTPURLResponse?)
     {
-        var useMacIdentity = true
+        var useMacIdentity = false
         while true {
             var request = makeTwoFactorAuthRequest(url: url, context: context, useMacIdentity: useMacIdentity)
             request.httpMethod = method
@@ -973,9 +973,9 @@ public extension DeveloperPortal {
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.safeStatusCode ?? 0
 
-            if useMacIdentity, [403, 433, 500, 503].contains(statusCode) {
-                debugLog("[SideSign] \(actionName) HTTP \(statusCode) with the Mac identity, retrying once with the sign-in identity")
-                useMacIdentity = false
+            if !useMacIdentity, [403, 433, 500, 503].contains(statusCode) {
+                debugLog("[SideSign] \(actionName) HTTP \(statusCode) with the sign-in identity, retrying once with the fixed Mac identity")
+                useMacIdentity = true
                 continue
             }
             return (data, httpResponse)
