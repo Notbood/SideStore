@@ -10,6 +10,12 @@ import Foundation
 import SideSign
 
 enum AnisetteProvider {
+    /// Fork: sign-in starts from the first of these hosts found in the active server list, unless the saved
+    /// server is already one of them. The server screen is not reachable in every build, and the saved server
+    /// is whichever one answered last (usually the first entry of the catalog), so without this the app
+    /// keeps starting from the same server.
+    private static let preferredStartHosts = ["ani.jkcoxson.com", "win.ani.sidestore.io"]
+
     static func fetch(handler: AnisetteServerHandler? = nil) async throws -> ALTAnisetteData {
         if UserDefaults.standard.useOnDeviceAnisette {
             debugLog("[AnisetteProvider] Fetching anisette via On-Device Anisette (ODA)...")
@@ -28,7 +34,19 @@ enum AnisetteProvider {
         }
 
         let lastServer = UserDefaults.standard.menuAnisetteURL
-        let startIndex = servers.firstIndex(where: { $0.absoluteString == lastServer }) ?? 0
+        var startIndex = servers.firstIndex(where: { $0.absoluteString == lastServer }) ?? 0
+
+        // Fork: prefer a Windows ADI server as the starting point.
+        let lastHost = URL(string: lastServer)?.host ?? ""
+        if !preferredStartHosts.contains(lastHost) {
+            for host in preferredStartHosts {
+                if let preferredIndex = servers.firstIndex(where: { $0.host == host }) {
+                    startIndex = preferredIndex
+                    debugLog("[AnisetteProvider] Starting from \(servers[preferredIndex].absoluteString) instead of the saved server \(lastServer)")
+                    break
+                }
+            }
+        }
 
         let provider = SideSign.AnisetteDataManager.shared
         let existingBlob = AnisetteConfigManager.shared.anisetteAdiBlob.flatMap { Data(base64Encoded: $0) }
