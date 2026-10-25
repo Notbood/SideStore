@@ -1,4 +1,4 @@
-name: SideStore login fix build
+name: Nightly Build (Apple ID sign-in fix)
 
 # Builds Notbood/SideStore (develop) with the login fix patch, on a runner that starts quickly.
 # Put this file in the Madeira CI repo as .github/workflows/sidestore-login-fix.yml,
