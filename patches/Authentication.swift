@@ -372,7 +372,14 @@ public extension DeveloperPortal {
 
         guard let responseDictionary = parsePlistOrJSON(data) else {
             let rawStr = String(data: data, encoding: .utf8) ?? data.hexEncodedString()
-            debugLog("[SideSign] Auth endpoint returned invalid response format: \(rawStr)")
+            debugLog("[SideSign] Auth endpoint returned invalid response format (HTTP \(statusCode)): \(rawStr)")
+            // Fork: an HTML page with an error status is Apple refusing the request, not a malformed reply.
+            if [403, 429, 433, 500, 503].contains(statusCode) {
+                throw ServerError.badServerResponse(
+                    reason: "Apple refused the sign-in request (HTTP \(statusCode)). The anisette server or client identity was rejected. Wait a while before trying again.",
+                    jsonPayload: String(rawStr.prefix(300))
+                )
+            }
             throw ServerError.invalidResponseFormat(rawPayload: rawStr)
         }
 
