@@ -20,13 +20,14 @@ enum AnisetteProvider {
     private static let adiMigrationKey = "MacAnisette.purgeAdi.v1"
 
     static func fetch(handler: AnisetteServerHandler? = nil) async throws -> ALTAnisetteData {
+        // Fork: on-device anisette is generated with libraries that identify as another platform, and Apple
+        // now answers its sign-in request with HTTP 503. Always use a Mac anisette server instead.
         if UserDefaults.standard.useOnDeviceAnisette {
-            debugLog("[AnisetteProvider] Fetching anisette via On-Device Anisette (ODA)...")
-            return try await OnDeviceAnisetteManager.shared.fetchAnisetteData()
-        } else {
-            debugLog("[AnisetteProvider] Fetching anisette via remote server...")
-            return try await fetchRemote(handler: handler)
+            debugLog("[AnisetteProvider] On-device anisette switched off (Mac anisette server fix)")
+            UserDefaults.standard.useOnDeviceAnisette = false
         }
+        debugLog("[AnisetteProvider] Fetching anisette via remote server...")
+        return try await fetchRemote(handler: handler)
     }
 
     /// Fork: GET <server>/v3/client_info, the identity this anisette server provisions (nil if unreachable).
