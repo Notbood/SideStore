@@ -19,10 +19,23 @@ public extension DeveloperPortal {
     //  * Apple now rejects GrandSlam, 2FA and developer services requests that identify as Windows/iTunes
     //    (error -80046 after the verification code), so every request uses the client info that came with
     //    the anisette data, which is the identity of the (Mac) anisette server that provisioned it.
-    //  * The user agent for GrandSlam and the 2FA pages is akd, never a Mac/Xcode one.
+    //  * The user agent is the one that came with the anisette data too (it has to match the client info),
+    //    unless it is a Mac/Xcode one, which Apple answers with HTTP 503.
     //  * If Apple answers a 2FA request with 403/433/500/503, it is sent once more with a fixed Mac identity.
     private static let akdUserAgent = "akd/1.0 CFNetwork/808.1.4"
     private static let macClientInfoFor2FA = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+
+    /// Fork: the user agent that came with the anisette data (it matches its client info), else the configured
+    /// one, else akd. Mac/Xcode user agents are skipped.
+    private func signInUserAgent(anisette: String, configured: String) -> String {
+        for candidate in [anisette, configured] {
+            let ua = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !ua.isEmpty && !ua.contains("Macintosh") && !ua.contains("Mac OS") && !ua.contains("Xcode") {
+                return ua
+            }
+        }
+        return Self.akdUserAgent
+    }
 
     /// Fork: the client info that came with the anisette data, or a Mac identity if there is none.
     private func signInClientInfo(_ configured: String) -> String {
@@ -332,14 +345,8 @@ public extension DeveloperPortal {
         request.httpMethod = "POST"
         request.httpBody = plistData
 
-        // Fork: the anisette server's client info and an akd user agent for GrandSlam (Apple rejects Mac/Xcode user agents here).
-        var grandSlamUserAgent = h.grandSlam.userAgent.trimmingCharacters(in: .whitespacesAndNewlines)
-        if grandSlamUserAgent.isEmpty
-            || grandSlamUserAgent.contains("Macintosh")
-            || grandSlamUserAgent.contains("Mac OS")
-            || grandSlamUserAgent.contains("Xcode") {
-            grandSlamUserAgent = Self.akdUserAgent
-        }
+        // Fork: the anisette server's client info and the user agent that goes with it (Apple rejects Mac/Xcode user agents here).
+        let grandSlamUserAgent = signInUserAgent(anisette: anisetteData.userAgent, configured: h.grandSlam.userAgent)
 
         let headers: [String: String] = [
             "Content-Type": "text/x-xml-plist",
@@ -921,8 +928,8 @@ public extension DeveloperPortal {
         return .success
     }
 
-    /// Fork: `useMacIdentity` false sends the sign-in identity (the anisette server's client info);
-    /// true sends the fixed Mac client info. Both use the akd user agent.
+    /// Fork: `useMacIdentity` false sends the sign-in identity (the anisette server's client info and user agent);
+    /// true sends the fixed Mac client info with the akd user agent.
     private func makeTwoFactorAuthRequest(url: URL, context: TwoFactorAuthContext, useMacIdentity: Bool = false) -> URLRequest {
         let identityToken = "\(context.dsid):\(context.idmsToken)"
         let encodedIdentityToken = Data(identityToken.utf8).base64EncodedString()
@@ -931,7 +938,9 @@ public extension DeveloperPortal {
         let a = context.anisetteData
         let h = customHeaders
         let clientInfo = useMacIdentity ? Self.macClientInfoFor2FA : signInClientInfo(a.clientInfo)
-        let userAgent = Self.akdUserAgent
+        let userAgent = useMacIdentity
+            ? Self.akdUserAgent
+            : signInUserAgent(anisette: a.userAgent, configured: h.grandSlam.userAgent)
         let headers: [String: String] = [
             "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
