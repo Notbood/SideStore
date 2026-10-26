@@ -74,6 +74,14 @@ enum AnisetteProvider {
             throw AnisetteError.noServersConfigured
         }
 
+        // Fork: the server catalog can shrink after a sync (yours had one entry), so make sure the preferred
+        // Mac servers are always present.
+        for host in preferredHosts.reversed() {
+            if !servers.contains(where: { $0.host == host }), let url = URL(string: "https://\(host)") {
+                servers.insert(url, at: 0)
+            }
+        }
+
         // Fork: Mac servers first, in the order of preferredHosts; the rest keep their order after them.
         let macServers = preferredHosts.compactMap { host in servers.first(where: { $0.host == host }) }
         if !macServers.isEmpty {
@@ -82,10 +90,10 @@ enum AnisetteProvider {
 
         let lastServer = UserDefaults.standard.menuAnisetteURL
         var startIndex = servers.firstIndex(where: { $0.absoluteString == lastServer }) ?? 0
-        let lastHost = URL(string: lastServer)?.host ?? ""
-        if !macServers.isEmpty && !preferredHosts.contains(lastHost) {
+        // Fork: always start from the first Mac server, not from whichever server answered last.
+        if !macServers.isEmpty {
             startIndex = 0
-            debugLog("[AnisetteProvider] Starting from \(servers[0].absoluteString) instead of the saved server \(lastServer)")
+            debugLog("[AnisetteProvider] Starting from \(servers[0].absoluteString) (saved server was \(lastServer))")
         }
 
         // Fork: one-time purge of the stored ADI blob (provisioned under another server's identity).
