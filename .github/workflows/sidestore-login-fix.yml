@@ -1,0 +1,88 @@
+name: SideStore login fix build
+
+# Builds Notbood/SideStore (develop) with the login fix patch, on a runner that starts quickly.
+# Put this file in the Madeira CI repo as .github/workflows/sidestore-login-fix.yml,
+# then run it from the Actions tab.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      RELEASE_NAME: Nightly
+      CHANNEL: nightly
+      UPSTREAM_CHANNEL: ""
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: sidestore
+
+    steps:
+      - name: Check out the SideStore fork
+        uses: actions/checkout@v4
+        with:
+          repository: Notbood/SideStore
+          ref: develop
+          path: sidestore
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: brew install ldid xcbeautify
+
+      # SideStore's own workflow pins Xcode 26.4, which this image may not have.
+      # Use 26.4 if it is installed, otherwise keep the image default. The list is printed for the log.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_26.4*.app 2>/dev/null | head -n 1 || true)
+          if [ -n "$XC" ]; then
+            sudo xcode-select -s "$XC/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Setup Env
+        run: |
+          BUILD_NUM="${{ github.run_number }}"
+          MARKETING_VERSION=$(python3 scripts/ci/workflow.py get-marketing-version)
+          SHORT_COMMIT=$(python3 scripts/ci/workflow.py commit-id)
+
+          NORMALIZED_VERSION=$(python3 scripts/ci/workflow.py compute-normalized \
+              "$MARKETING_VERSION" \
+              "$BUILD_NUM" \
+              "$SHORT_COMMIT")
+
+          python3 scripts/ci/workflow.py set-marketing-version "$NORMALIZED_VERSION"
+
+          echo "BUILD_NUM=$BUILD_NUM" | tee -a $GITHUB_ENV
+          echo "SHORT_COMMIT=$SHORT_COMMIT" | tee -a $GITHUB_ENV
+          echo "MARKETING_VERSION=$NORMALIZED_VERSION" | tee -a $GITHUB_ENV
+
+      - name: Prepare log folder
+        run: mkdir -p build/logs
+
+      - name: Apply login fix patch
+        run: cp patches/Authentication.swift Dependencies/SideSign/Sources/DeveloperPortal/Authentication.swift
+
+      - name: Build
+        run: python3 scripts/ci/workflow.py build
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SideStore-login-fix-${{ github.run_number }}.ipa
+          path: sidestore/SideStore.ipa
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidestore-build-logs-${{ github.run_number }}
+          path: |
+            sidestore/build/logs
+            sidestore/build-logs.zip
+          if-no-files-found: ignore
